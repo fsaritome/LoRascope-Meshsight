@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>LoRascope Meshsight</title>
+<meta name="author" content="Ferit Sari Tomé">
+<meta name="description" content="Line of sight, Fresnel clearance and coverage maps for LoRa / MeshCore / Meshtastic nodes — anywhere, with live terrain.">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: survey sheet — live map left, path instrument panel right, ranked link table below */
+:root{
+  --bg:#eef0ea; --panel:#f8f9f5; --fg:#1d2420; --muted:#5d6a62; --line:#cdd3c9;
+  --accent:#b4541c; --los:#1f5f8b; --fresnel:rgba(31,95,139,.14); --terrain:#7d8f6a; --terrain-fill:rgba(125,143,106,.35);
+  --ok:#2e7d4f; --warn:#b07a12; --bad:#b3322a;
+  --ok-bg:rgba(46,125,79,.12); --warn-bg:rgba(176,122,18,.14); --bad-bg:rgba(179,50,42,.12);
+  --display:"Barlow Condensed","Arial Narrow",sans-serif;
+  --body:"Source Sans 3",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#141916; --panel:#1b211d; --fg:#e3e8e1; --muted:#98a59c; --line:#2f3832;
+  --accent:#e08a4e; --los:#6fb1e0; --fresnel:rgba(111,177,224,.16); --terrain:#9fb48a; --terrain-fill:rgba(159,180,138,.25);
+  --ok:#5fc38a; --warn:#e0b04e; --bad:#ef7a70;
+  --ok-bg:rgba(95,195,138,.14); --warn-bg:rgba(224,176,78,.14); --bad-bg:rgba(239,122,112,.14);
+  color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 var(--body);padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+.wrap{max-width:1320px;margin:0 auto;padding-block:20px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:18px}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 18px}
+h1{font:600 2.1rem/1.05 var(--display);letter-spacing:.01em;margin:0}
+h1 span{color:var(--accent)}
+.brand{display:grid;gap:2px}
+.by{margin:0;font:500 .8rem var(--mono);color:var(--muted);letter-spacing:.02em}
+.sub{color:var(--muted);font-size:.92rem;margin:0;flex:1 1 380px}
+.grid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:18px;align-items:start}
+@media (max-width:920px){.grid{grid-template-columns:minmax(0,1fr)}}
+.mapcol{display:grid;gap:8px;min-width:0}
+.mapbox{position:relative;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel)}
+#map{height:min(72vh,680px);min-height:380px;width:100%;background:#cfd6cc}
+.mapbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.search{display:flex;gap:6px;flex:1 1 260px;min-width:0}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.8rem;color:var(--muted)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px;border:1.5px solid #fff}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px;display:grid;gap:14px;min-width:0}
+.label{font:600 .72rem var(--body);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.fields .wide{grid-column:1/-1}
+label{display:grid;gap:4px;font-size:.82rem;color:var(--muted)}
+input,select{font:500 .92rem var(--mono);color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:7px 9px;width:100%;min-width:0}
+button{font:600 .82rem var(--body);color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:7px 11px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+input:focus-visible,select:focus-visible,button:focus-visible,tr:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.seg{display:grid;gap:4px;font-size:.82rem;color:var(--muted)}
+.segbtns{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+.segbtns button{border:0;border-radius:0;background:var(--bg);padding:7px 10px;text-align:left;display:grid;gap:1px}
+.segbtns button+button{border-left:1px solid var(--line)}
+.segbtns button small{font:400 .72rem var(--body);color:var(--muted)}
+.segbtns button[aria-pressed="true"]{background:var(--accent);color:#fff}
+.segbtns button[aria-pressed="true"] small{color:rgba(255,255,255,.85)}
+details{border:1px solid var(--line);border-radius:5px;padding:8px 10px}
+summary{cursor:pointer;font-size:.84rem;color:var(--fg)}
+details .fields{margin-top:10px}
+.state{font-size:.84rem;color:var(--muted);margin:0}
+.state b{color:var(--accent);font-weight:600}
+.status{font:500 .78rem var(--mono);color:var(--accent);min-height:1.2em;margin:0}
+.target{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.target h2{font:600 1.5rem/1.1 var(--display);margin:0;overflow-wrap:anywhere}
+.pill{font:600 .74rem var(--body);text-transform:uppercase;letter-spacing:.06em;padding:3px 9px;border-radius:99px;white-space:nowrap}
+.pill.ok{color:var(--ok);background:var(--ok-bg)} .pill.warn{color:var(--warn);background:var(--warn-bg)} .pill.bad{color:var(--bad);background:var(--bad-bg)}
+#prof{width:100%;height:220px;display:block;cursor:crosshair;touch-action:pan-y}
+.profbar{display:flex;justify-content:space-between;align-items:center;gap:8px 14px;flex-wrap:wrap;margin-top:-6px}
+.readout{margin:0;font:500 .78rem var(--mono);color:var(--muted);font-variant-numeric:tabular-nums;min-width:0;flex:1 1 260px}
+.toggle{display:flex;flex-direction:row;align-items:center;gap:7px;color:var(--fg);font-size:.86rem;cursor:pointer;white-space:nowrap}
+.toggle input{width:16px;height:16px;padding:0;margin:0;accent-color:var(--accent)}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px}
+.stat .v{font:500 1.15rem var(--mono);font-variant-numeric:tabular-nums}
+.stat .k{font-size:.78rem;color:var(--muted)}
+.note{font-size:.8rem;color:var(--muted);margin:0}
+.covleg{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:.76rem;color:var(--fg)}
+.covleg:empty{display:none}
+.covleg i{display:inline-block;width:16px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px;border:1px solid rgba(0,0,0,.15)}
+.tablebox{background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:680px;font-size:.88rem}
+th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font:600 .72rem var(--body);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);background:var(--panel)}
+td.n,th.n{text-align:right} td.n{font-family:var(--mono);font-variant-numeric:tabular-nums}
+tbody tr{cursor:pointer} tbody tr:hover{background:var(--bg)} tbody tr.sel{background:var(--warn-bg)}
+.tabhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;padding:12px 12px 4px}
+.tabhead h3{font:600 1.2rem var(--display);margin:0}
+footer{font-size:.78rem;color:var(--muted)}
+footer a{color:inherit}
+/* map markers */
+.mk-a{width:18px;height:18px;background:var(--accent);border:2.5px solid #fff;box-shadow:0 0 0 3px rgba(180,84,28,.45),0 1px 4px rgba(0,0,0,.5)}
+.mk-b{width:18px;height:18px;background:#7a3fb0;border:2.5px solid #fff;transform:rotate(45deg);box-shadow:0 1px 4px rgba(0,0,0,.5)}
+.leaflet-tooltip.worst{font:600 12px var(--mono);background:rgba(20,20,20,.8);color:#fff;border:0;box-shadow:none}
+.leaflet-tooltip.worst::before{display:none}
+.leaflet-container{font-family:var(--body)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><h1>LoRa<span>scope</span> · Meshsight</h1><p class="by">by Ferit Sari Tomé</p></div>
+    <p class="sub">Plan your LoRa mesh links: line of sight, Fresnel clearance and coverage for MeshCore and Meshtastic nodes. Click anywhere on the map and terrain, repeaters and coverage load live for that spot.</p>
+  </header>
+
+  <div class="grid">
+    <div class="mapcol">
+      <div class="mapbar">
+        <form class="search" id="searchForm"><input id="q" placeholder="Search a place or paste coordinates" aria-label="Search a place"><button type="submit">Go</button></form>
+        <div class="segbtns" role="group" aria-label="What a click on the map places" style="flex:0 0 auto">
+          <button id="cA" type="button" aria-pressed="true">Click sets antenna A</button>
+          <button id="cB" type="button" aria-pressed="false">Click sets point B</button>
+        </div>
+      </div>
+      <div class="mapbox"><div id="map" role="application" aria-label="Map. Click to place antenna A or point B, click a repeater to select it."></div></div>
+      <div class="legend" aria-hidden="true">
+        <span><span class="dot" style="background:var(--ok)"></span>Line of sight</span>
+        <span><span class="dot" style="background:var(--warn)"></span>Fresnel zone partly blocked</span>
+        <span><span class="dot" style="background:var(--bad)"></span>No line of sight</span>
+        <span><span class="dot" style="background:#8a8f8c"></span>Outside range</span>
+        <span><span class="dot" style="background:#d63028;border-radius:2px;width:16px;height:6px"></span>Path below terrain</span>
+        <span><span class="dot" style="background:#e0a028;border-radius:2px;width:16px;height:6px"></span>Fresnel zone clipped</span>
+      </div>
+    </div>
+
+    <section class="panel" aria-live="polite">
+      <div class="fields">
+        <label class="wide">Antenna A (your node)<input id="coords" inputmode="decimal"></label>
+        <label>Height of A above ground (m)<input id="hA" type="number" min="0.5" max="200" step="0.5"></label>
+        <label>Height of far end (m)<input id="hB" type="number" min="0.5" max="200" step="0.5"></label>
+        <label class="wide">Point B, optional (or "Click sets point B")<input id="bcoords" inputmode="decimal" placeholder="not set"></label>
+      </div>
+      <details>
+        <summary>Radio settings</summary>
+        <div class="fields">
+          <label>Frequency (MHz)<input id="freq" type="number" step="0.001"></label>
+          <label>TX power (dBm)<input id="tx" type="number" step="1" min="0" max="30"></label>
+          <label>Antenna gain, each end (dBi)<input id="gain" type="number" step="0.5" min="0" max="15"></label>
+          <label>Spreading factor<select id="sf"><option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option></select></label>
+          <label>Bandwidth (kHz)<select id="bw"><option>62.5</option><option>125</option><option>250</option><option>500</option></select></label>
+          <label>Receiver sensitivity<input id="sens" readonly tabindex="-1"></label>
+        </div>
+        <p class="note" style="margin-top:8px">Defaults match the MeshCore EU/UK Narrow preset. Sensitivity includes a 3 dB allowance.</p>
+      </details>
+
+      <div class="seg" role="group" aria-label="Coverage map">
+        <span>Coverage map from antenna A</span>
+        <div class="segbtns">
+          <button id="vOff" type="button" aria-pressed="true">Off</button>
+          <button id="vLoss" type="button" aria-pressed="false">Terrain loss<small>dB lost to hills</small></button>
+          <button id="vMargin" type="button" aria-pressed="false">Link margin<small>what actually works</small></button>
+        </div>
+      </div>
+      <div class="fields">
+        <label>Range (km)<select id="range"><option value="10000">10</option><option value="15000">15</option><option value="20000">20</option><option value="30000">30</option></select></label>
+        <label id="extraWrap">Extra losses (dB): roof, trees, cable, noise<input id="extra" type="number" min="0" max="60" step="1"></label>
+      </div>
+      <div class="covleg" id="covlegend"></div>
+      <p class="status" id="status"></p>
+
+      <div class="target"><h2 id="tname">Pick a repeater or point B</h2><span class="pill" id="tpill" hidden></span></div>
+      <canvas id="prof" aria-label="Terrain profile. Slide over it to locate each point on the map."></canvas>
+      <div class="profbar">
+        <p class="readout" id="readout">Slide over the profile to find each point on the map.</p>
+        <label class="toggle"><input type="checkbox" id="obs"> Show obstacles on map</label>
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="v" id="sDist">–</div><div class="k">Distance</div></div>
+        <div class="stat"><div class="v" id="sClr">–</div><div class="k">Worst clearance vs. line of sight</div></div>
+        <div class="stat"><div class="v" id="sF1">–</div><div class="k">of 1st Fresnel zone at that point</div></div>
+        <div class="stat"><div class="v" id="sDiff">–</div><div class="k">Extra loss from the obstacle (knife-edge)</div></div>
+        <div class="stat"><div class="v" id="sPL">–</div><div class="k">Path loss (free space + obstacle)</div></div>
+        <div class="stat"><div class="v" id="sMargin">–</div><div class="k">Link margin after extra losses</div></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button id="share" type="button">Copy link to this view</button><span class="note" id="shareNote"></span></div>
+      <p class="note">Terrain: AWS Terrain Tiles (~25–30 m), partly includes trees. Antennas assumed outdoors; put roof and attic losses into "Extra losses". Repeater positions as advertised on the MeshCore map; their antenna heights are unknown.</p>
+    </section>
+  </div>
+
+  <section class="tablebox">
+    <div class="tabhead"><h3>Repeaters within range of A</h3><span class="note" id="tablenote">Sorted by path loss. Click a row to show its profile.</span></div>
+    <table>
+      <thead><tr><th>Repeater</th><th class="n">Distance</th><th class="n">Clearance</th><th class="n">% F1</th><th class="n">Obstacle loss</th><th class="n">Path loss</th><th class="n">Margin</th><th>Status</th><th>Last seen</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+
+  <footer>
+    <p style="margin:0 0 6px;color:var(--fg)">© 2026 Ferit Sari Tomé. LoRascope Meshsight.</p>
+    Terrain: <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">AWS Terrain Tiles</a> (Mapzen; includes data from SRTM, EU-DEM © EEA and others). Maps © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>, OpenTopoMap (CC-BY-SA), Esri World Imagery, Bavarian aerial imagery © Bayerische Vermessungsverwaltung (CC BY 4.0). Repeaters from the <a href="https://map.meshcore.dev" target="_blank" rel="noopener">MeshCore map</a>, refreshed daily<span id="gen"></span>. Search by Nominatim.
+  </footer>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

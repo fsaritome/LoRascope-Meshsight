@@ -1,0 +1,26 @@
+name: Update repeater list
+
+on:
+  schedule:
+    - cron: "17 3 * * *"   # daily, 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download MeshCore map nodes
+        run: curl -sSfL --retry 3 --max-time 300 https://map.meshcore.io/api/v1/nodes -o /tmp/nodes_raw.json
+      - name: Slim to repeaters and room servers
+        run: python3 scripts/slim_nodes.py /tmp/nodes_raw.json data/nodes.json
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/nodes.json
+          git diff --cached --quiet || git commit -m "Update repeater list"
+          git push
